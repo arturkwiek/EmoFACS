@@ -1,0 +1,14 @@
+# Core deep-learning stack
+torch>=2.0
+torchvision>=0.15
+
+# Computer vision
+opencv-python>=4.8
+
+# Numerical
+# numpy<1.24 required by nltools (transitive dep of py-feat 0.6.x)
+numpy>=1.17,<1.24
+scipy>=1.7.0
+
+# Facial AU / landmark detector
+py-feat>=0.6,<2.0
