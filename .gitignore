@@ -1,25 +1,15 @@
-# Virtual environments
+# Virtual environment
 .venv/
-venv/
-env/
 
 # Python cache
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
 
-# Model weights / large artifacts
-*.pt
-*.pth
-*.onnx
-*.h5
-*.ckpt
+# Personal mood data — do not commit
+data/
 
-# OS / editor
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
+# Trained weights (large binaries)
+models/*.pth
 
-# Logs
-*.log
+# Local helper folder for files pending deletion
+_to_delete/

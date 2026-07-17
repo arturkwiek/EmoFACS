@@ -34,6 +34,9 @@ class EmotionPipeline:
         self.detector = FaceDetector()
         self.au_extractor = AUExtractor()
         self.emotion = EmotionInference(au_dim=au_dim, weights_path=weights_path)
+        # True only when a trained AU→V/A regressor was actually loaded;
+        # consumers use this to decide whether V/A values are meaningful.
+        self.va_trained = weights_path is not None
 
     def run_on_image(self, img_path: str) -> dict:
         """
@@ -41,7 +44,8 @@ class EmotionPipeline:
 
         Returns
         -------
-        dict with keys: valence, arousal, raw_aus  — or  {"error": reason}.
+        dict with keys: valence, arousal, va_trained, emotions, raw_aus
+        — or  {"error": reason}.
         """
         if not os.path.isfile(img_path):
             return {"error": f"file_not_found: {img_path}"}
@@ -62,10 +66,4 @@ class EmotionPipeline:
         preds = self.detector.detect(img_bgr)
         au_vec = self.au_extractor.extract(preds)
         if au_vec is None:
-            return {"error": "no_face_detected"}
-        va = self.emotion.predict(au_vec)
-        return {
-            "valence": va["valence"],
-            "arousal": va["arousal"],
-            "raw_aus": au_vec.tolist(),
-        }
+        

@@ -17,12 +17,14 @@ import argparse
 import math
 import os
 import sys
+import time
 
 import cv2
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.pipeline import EmotionPipeline
+from src.emolog.logger import EmotionLogger, default_db_path
 
 # ── Emotion centres in Valence-Arousal space ──────────────────────────────────
 _EMOTION_CENTERS: dict[str, tuple[float, float]] = {
@@ -83,6 +85,17 @@ def parse_args() -> argparse.Namespace:
         help="Run detection every N-th frame and reuse the last result "
              "in between (default: 3). Use 1 to analyse every frame.",
     )
+    parser.add_argument(
+        "--no-log",
+        action="store_true",
+        help="Disable logging of measurements to the SQLite database.",
+    )
+    parser.add_argument(
+        "--db",
+        default=None,
+        help="Path to the emolog SQLite database "
+             "(default: <repo>/data/emolog.db).",
+    )
     return parser.parse_args()
 
 
@@ -102,7 +115,28 @@ def draw_overlay(frame, result: dict) -> None:
         cv2.putText(frame, "[No face detected]", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         return
-    emotions = _emotions_from_va(valence, arousal)
+
+    emotions_map = result.get("emotions")
+    va_trained = result.get("va_trained", False)
+
+    if emotions_map:
+        # Real probabilities from py-feat's trained emotion classifier.
+        emotions = sorted(emotions_map.items(), key=lambda x: x[1], reverse=True)
+        if not va_trained:
+            # No trained AU→V/A regressor — derive V/A as the probability-
+            # weighted centroid of the emotion centres, so the circumplex
+            # reflects the real classifier output instead of random weights.
+            valence = sum(p * _EMOTION_CENTERS.get(n, (0.0, 0.0))[0]
+                          for n, p in emotions)
+            arousal = sum(p * _EMOTION_CENTERS.get(n, (0.0, 0.0))[1]
+                          for n, p in emotions)
+            va_source = "emotions"
+        else:
+            va_source = "regressor"
+    else:
+        # Fallback: fuzzy Gaussian membership derived from raw V/A.
+        emotions = _emotions_from_va(valence, arousal)
+        va_source = "regressor" if va_trained else "untrained!"
 
     # ── 1. Semi-transparent panel background ─────────────────────────────────
     top_n = 5
@@ -141,7 +175,7 @@ def draw_overlay(frame, result: dict) -> None:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
 
     # ── 3. Raw V/A values (small, below panel) ───────────────────────────────
-    va_text = f"V:{valence:+.2f}  A:{arousal:+.2f}"
+    va_text = f"V:{valence:+.2f}  A:{arousal:+.2f}  [{va_source}]"
     cv2.putText(frame, va_text,
                 (panel_x + 2, panel_y + panel_h + 14),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA)
@@ -168,51 +202,4 @@ def draw_overlay(frame, result: dict) -> None:
     dot_x = cx + int(valence * (r - 4))
     dot_y = cy - int(arousal * (r - 4))
     dot_color = _EMOTION_COLORS.get(emotions[0][0], (0, 200, 0))
-    cv2.circle(frame, (dot_x, dot_y), 7, dot_color, -1)
-    cv2.circle(frame, (dot_x, dot_y), 7, (255, 255, 255), 1)
-
-
-def main() -> None:
-    args = parse_args()
-
-    weights = args.weights
-    if weights and not os.path.isfile(weights):
-        print(f"[warning] weights file not found: {weights} — running with random weights.")
-        weights = None
-
-    pipeline = EmotionPipeline(weights_path=weights)
-
-    cap = cv2.VideoCapture(args.cam)
-    if not cap.isOpened():
-        sys.exit(f"[error] Cannot open camera index {args.cam}.")
-
-    every = max(1, args.every)
-    frame_idx = 0
-    last_result: dict = {"error": "warming_up"}
-
-    print("Press 'q' to quit.")
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("[warning] Empty frame received, skipping.")
-            continue
-
-        # Detection is by far the slowest step (~seconds on CPU), so run it
-        # only on every N-th frame and redraw the last result in between —
-        # the preview stays fluid while the analysis updates periodically.
-        if frame_idx % every == 0:
-            last_result = pipeline.run_on_frame(frame)
-        frame_idx += 1
-
-        draw_overlay(frame, last_result)
-
-        cv2.imshow("Emotion Recognition — press q to quit", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()
+    cv2.circle(frame, (dot_x, dot_y), 7, dot

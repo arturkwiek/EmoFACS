@@ -73,10 +73,13 @@ tekst V/A w kolorze (130,130,130) również ginął na jasnym tle.
 
 ## Poza zakresem (do zrobienia następnym razem)
 
-- **Wagi modelu**: `models/` nadal nie zawiera `emotion_regressor.pth` —
-  V/A pochodzą z losowo zainicjalizowanego MLP. Szybka opcja: użyć
-  wbudowanych `preds.emotions` z py-feat.
+- ~~**Wagi modelu**: użyć wbudowanych `preds.emotions` z py-feat.~~
+  ✅ Zrobione — patrz część 2 poniżej.
 - Detekcja w osobnym wątku (zamiast pomijania klatek) — pełna płynność
   podglądu.
 - Wyjście z pętli po serii pustych klatek (obecnie `continue` może się
   zapętlić po odłączeniu kamery).
+
+---
+
+# Część 2 — prawdziwe emocje z py-feat (2026-07-17, późnie
