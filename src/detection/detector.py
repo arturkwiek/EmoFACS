@@ -32,13 +32,23 @@ class FaceDetector:
         py-feat 0.6.x requires a file path — we write a temp file and
         pass the path, then clean it up immediately.
         Returns a Fex object with .aus, .emotions, .facepose, etc.
+
+        Performance notes:
+        - The frame is written directly as BGR (cv2.imwrite expects BGR),
+          so no colour-space round-trip is needed.
+        - PNG is used instead of JPEG: lossless, so AU extraction is not
+          affected by compression artifacts. Fast compression level keeps
+          the encode time in the low-millisecond range.
+        - The temp file handle is closed *before* cv2.imwrite opens the
+          path — required for reliable behaviour on Windows.
         """
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
         try:
-            cv2.imwrite(tmp.name, cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
-            preds = self.detector.detect_image(tmp.name)
+            cv2.imwrite(tmp_path, img_bgr,
+                        [cv2.IMWRITE_PNG_COMPRESSION, 1])
+            preds = self.detector.detect_image(tmp_path)
         finally:
-            tmp.close()
-            os.unlink(tmp.name)
+            os.unlink(tmp_path)
         return preds

@@ -76,6 +76,13 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Camera device index (default: 0).",
     )
+    parser.add_argument(
+        "--every",
+        type=int,
+        default=3,
+        help="Run detection every N-th frame and reuse the last result "
+             "in between (default: 3). Use 1 to analyse every frame.",
+    )
     return parser.parse_args()
 
 
@@ -90,6 +97,11 @@ def draw_overlay(frame, result: dict) -> None:
 
     valence = result["valence"]
     arousal = result["arousal"]
+
+    if math.isnan(valence) or math.isnan(arousal):
+        cv2.putText(frame, "[No face detected]", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        return
     emotions = _emotions_from_va(valence, arousal)
 
     # ── 1. Semi-transparent panel background ─────────────────────────────────
@@ -102,8 +114,9 @@ def draw_overlay(frame, result: dict) -> None:
 
     overlay = frame.copy()
     cv2.rectangle(overlay, (panel_x - 4, panel_y - 4),
-                  (panel_x + panel_w, panel_y + panel_h), (20, 20, 20), -1)
-    cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, frame)
+                  (panel_x + panel_w, panel_y + panel_h), (15, 15, 15), -1)
+    # Darker panel (0.45 → 0.70) so light text stays readable on bright scenes.
+    cv2.addWeighted(overlay, 0.70, frame, 0.30, 0, frame)
 
     # ── 2. Emotion bars ───────────────────────────────────────────────────────
     for i, (name, prob) in enumerate(emotions[:top_n]):
@@ -119,13 +132,22 @@ def draw_overlay(frame, result: dict) -> None:
         fill = int(bar_w_max * prob)
         cv2.rectangle(frame, (bar_x, y - 13), (bar_x + fill, y + 4), color, -1)
 
-        cv2.putText(frame, f"{prob * 100:4.1f}%", (bar_x + bar_w_max + 5, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv2.LINE_AA)
+        # White percentage text with a thin dark outline — readable regardless
+        # of the emotion colour (grey-on-grey "Neutral" was nearly invisible).
+        pct = f"{prob * 100:4.1f}%"
+        cv2.putText(frame, pct, (bar_x + bar_w_max + 5, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(frame, pct, (bar_x + bar_w_max + 5, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
 
     # ── 3. Raw V/A values (small, below panel) ───────────────────────────────
-    cv2.putText(frame, f"V:{valence:+.2f}  A:{arousal:+.2f}",
+    va_text = f"V:{valence:+.2f}  A:{arousal:+.2f}"
+    cv2.putText(frame, va_text,
                 (panel_x + 2, panel_y + panel_h + 14),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (130, 130, 130), 1, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(frame, va_text,
+                (panel_x + 2, panel_y + panel_h + 14),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 220), 1, cv2.LINE_AA)
 
     # ── 4. VA circumplex (bottom-right corner) ────────────────────────────────
     cx, cy, r = w - 75, h - 75, 58
@@ -164,6 +186,10 @@ def main() -> None:
     if not cap.isOpened():
         sys.exit(f"[error] Cannot open camera index {args.cam}.")
 
+    every = max(1, args.every)
+    frame_idx = 0
+    last_result: dict = {"error": "warming_up"}
+
     print("Press 'q' to quit.")
     while True:
         ret, frame = cap.read()
@@ -171,8 +197,14 @@ def main() -> None:
             print("[warning] Empty frame received, skipping.")
             continue
 
-        result = pipeline.run_on_frame(frame)
-        draw_overlay(frame, result)
+        # Detection is by far the slowest step (~seconds on CPU), so run it
+        # only on every N-th frame and redraw the last result in between —
+        # the preview stays fluid while the analysis updates periodically.
+        if frame_idx % every == 0:
+            last_result = pipeline.run_on_frame(frame)
+        frame_idx += 1
+
+        draw_overlay(frame, last_result)
 
         cv2.imshow("Emotion Recognition — press q to quit", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
