@@ -1,6 +1,9 @@
 # Core deep-learning stack
-torch>=2.0
-torchvision>=0.15
+# Upper bounds matter: py-feat 0.6.2 imports torchvision.io.read_video,
+# which was removed after 0.21. Verified working pair: torch 2.6.0 +
+# torchvision 0.21.0.
+torch>=2.0,<2.7
+torchvision>=0.15,<0.22
 
 # Computer vision
 opencv-python>=4.8
@@ -8,7 +11,11 @@ opencv-python>=4.8
 # Numerical
 # numpy<1.24 required by nltools (transitive dep of py-feat 0.6.x)
 numpy>=1.17,<1.24
-scipy>=1.7.0
+# scipy<1.14 required by py-feat 0.6.2: it imports scipy.integrate.simps,
+# removed in SciPy 1.14. Verified working: 1.13.1.
+scipy>=1.7.0,<1.14
 
 # Facial AU / landmark detector
+# 0.6.2 is the newest release in the 0.x line — there is nothing to
+# upgrade to, so the pins above exist to keep its dependencies in range.
 py-feat>=0.6,<2.0

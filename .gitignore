@@ -1,5 +1,6 @@
-# Virtual environment
+# Virtual environments — one per platform (.venv-win, .venv-wsl, ...)
 .venv/
+.venv-*/
 
 # Python cache
 __pycache__/
@@ -11,5 +12,10 @@ data/
 # Trained weights (large binaries)
 models/*.pth
 
-# Local helper folder for files pending deletion
+# Local helper folders for files pending deletion
 _to_delete/
+_to_delete_*/
+
+# OS / editor noise
+Thumbs.db
+.DS_Store

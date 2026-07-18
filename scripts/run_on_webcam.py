@@ -7,6 +7,12 @@ Usage
 -----
     python scripts/run_on_webcam.py [--weights models/emotion_regressor.pth] [--cam 0]
 
+`--cam` also accepts a stream URL, which is how this runs under WSL: the
+camera is served from Windows by `scripts/serve_camera_windows.py` and
+consumed here over HTTP.
+
+    python scripts/run_on_webcam.py --cam http://172.22.128.1:8080/video
+
 Controls
 --------
     q  — quit
@@ -74,9 +80,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cam",
-        type=int,
-        default=0,
-        help="Camera device index (default: 0).",
+        default="0",
+        help="Camera device index, or a stream URL such as "
+             "http://172.22.128.1:8080/video (default: 0).",
     )
     parser.add_argument(
         "--every",
@@ -202,4 +208,196 @@ def draw_overlay(frame, result: dict) -> None:
     dot_x = cx + int(valence * (r - 4))
     dot_y = cy - int(arousal * (r - 4))
     dot_color = _EMOTION_COLORS.get(emotions[0][0], (0, 200, 0))
-    cv2.circle(frame, (dot_x, dot_y), 7, dot
+    cv2.circle(frame, (dot_x, dot_y), 7, dot_color, -1)
+    cv2.circle(frame, (dot_x, dot_y), 7, (255, 255, 255), 1)
+
+
+def _is_wsl() -> bool:
+    """Return True when running inside Windows Subsystem for Linux."""
+    try:
+        with open("/proc/version") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
+
+
+def parse_source(value: str) -> "int | str":
+    """Interpret --cam as a device index when numeric, otherwise as a URL."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def open_camera(source: "int | str") -> "cv2.VideoCapture":
+    """
+    Open the camera, falling back to DirectShow when the default backend
+    (MSMF on Windows) fails — MSMF is known to stop delivering frames
+    with errors like 0xC00D3EA2 when the device hiccups or another app
+    grabs it.
+
+    The DirectShow fallback applies to local device indices only; for a
+    stream URL the default backend (FFMPEG) is the only sensible one.
+    """
+    cap = cv2.VideoCapture(source)
+    if cap.isOpened():
+        return cap
+    cap.release()
+    if isinstance(source, int) and hasattr(cv2, "CAP_DSHOW"):
+        print("[warning] Default backend failed — trying DirectShow.")
+        cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+    return cap
+
+
+def _find_camera(preferred: "int | str") -> "cv2.VideoCapture | None":
+    """
+    Try the preferred source first; if it is a device index and fails,
+    probe indices 0–4. Returns an opened VideoCapture or None.
+
+    A URL is never substituted with a local index — silently falling back
+    to a different camera would hide the fact that the stream is down.
+    """
+    cap = open_camera(preferred)
+    if cap.isOpened():
+        return cap
+    if not isinstance(preferred, int):
+        return None
+    for idx in range(5):
+        if idx == preferred:
+            continue
+        cap = open_camera(idx)
+        if cap.isOpened():
+            print(f"[info] Camera {preferred} unavailable — using index {idx}.")
+            return cap
+    return None
+
+
+def main() -> None:
+    args = parse_args()
+
+    weights = args.weights
+    if weights and not os.path.isfile(weights):
+        print(f"[warning] weights file not found: {weights} — running with random weights.")
+        weights = None
+
+    pipeline = EmotionPipeline(weights_path=weights)
+
+    source = parse_source(args.cam)
+
+    # A local device index under WSL opens successfully and then never
+    # delivers a frame (USB/IP does not carry the isochronous transfers
+    # UVC streaming needs). Failing here beats ~10 s of `select() timeout`
+    # that looks like a camera warming up.
+    if isinstance(source, int) and _is_wsl():
+        sys.exit(
+            f"[error] --cam {source} is a local device index, which cannot "
+            "work under WSL.\n"
+            "WSL2 does not expose USB cameras, and usbipd is not enough: UVC "
+            "streaming needs\nisochronous USB transfers, which USB/IP does not "
+            "carry. The device opens and\nthen never delivers a frame.\n\n"
+            "Serve the camera from Windows instead:\n"
+            "  # on Windows, leave running:\n"
+            "  .\\.venv\\Scripts\\python.exe scripts/serve_camera_windows.py\n"
+            "  # then here, with the host IP from `ip route show default`:\n"
+            "  python scripts/run_on_webcam.py --cam http://<HOST_IP>:8080/video\n\n"
+            "See TROUBLESHOOTING.md section 3."
+        )
+
+    cap = _find_camera(source)
+    if cap is None or not cap.isOpened():
+        if isinstance(source, int):
+            msg = f"[error] Cannot open camera index {source}."
+        else:
+            msg = f"[error] Cannot open stream {source}."
+        if _is_wsl():
+            msg += (
+                "\n\nYou appear to be running inside WSL. "
+                "WSL2 does not expose USB cameras as /dev/video* devices by default,\n"
+                "and attaching one with usbipd is not enough: UVC streaming needs\n"
+                "isochronous USB transfers, which USB/IP does not carry, so the\n"
+                "device opens but never delivers a frame (select() timeout).\n"
+                "Options:\n"
+                "  1. Serve the camera from Windows and consume it here (recommended):\n"
+                "       # on Windows:\n"
+                "       .\\.venv\\Scripts\\python.exe scripts/serve_camera_windows.py\n"
+                "       # then in WSL, with the host IP from `ip route show default`:\n"
+                "       python scripts/run_on_webcam.py --cam http://<HOST_IP>:8080/video\n"
+                "  2. Run the whole script with Windows-native Python instead of WSL:\n"
+                "       py scripts/run_on_webcam.py\n"
+            )
+        sys.exit(msg)
+
+    logger = None
+    if not args.no_log:
+        logger = EmotionLogger(
+            db_path=args.db,
+            source=f"webcam:{args.cam}",
+            va_trained=weights is not None,
+        )
+        print(f"[emolog] Logging to {args.db or default_db_path()} "
+              f"(session #{logger.session_id}). Use --no-log to disable.")
+
+    every = max(1, args.every)
+    frame_idx = 0
+    last_result: dict = {"error": "warming_up"}
+
+    # Camera-failure handling: MSMF on Windows can permanently stop
+    # delivering frames (error 0xC00D3EA2). Instead of spinning forever
+    # on warnings, back off briefly, try to reconnect a few times, and
+    # exit cleanly (the emolog session still gets saved via `finally`).
+    MAX_EMPTY_STREAK = 30    # ~3 s of consecutive empty frames
+    MAX_RECONNECTS = 3
+    empty_streak = 0
+    reconnects = 0
+
+    print("Press 'q' to quit.")
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                empty_streak += 1
+                if empty_streak == 1:
+                    print("[warning] Empty frame received — waiting for "
+                          "the camera to recover...")
+                time.sleep(0.1)
+                if empty_streak >= MAX_EMPTY_STREAK:
+                    if reconnects >= MAX_RECONNECTS:
+                        print("[error] Camera is not recovering — exiting.")
+                        break
+                    reconnects += 1
+                    print(f"[warning] Reconnecting to camera "
+                          f"({reconnects}/{MAX_RECONNECTS})...")
+                    cap.release()
+                    time.sleep(1.0)
+                    cap = open_camera(source)
+                    empty_streak = 0
+                continue
+            empty_streak = 0
+            reconnects = 0
+
+            # Detection is by far the slowest step (~seconds on CPU), so run
+            # it only on every N-th frame and redraw the last result in
+            # between — the preview stays fluid while the analysis updates
+            # periodically.
+            if frame_idx % every == 0:
+                last_result = pipeline.run_on_frame(frame)
+                if logger:
+                    logger.log(last_result)  # error results are ignored
+            frame_idx += 1
+
+            draw_overlay(frame, last_result)
+
+            cv2.imshow("Emotion Recognition - press q to quit", frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+    finally:
+        if logger:
+            logger.close()
+            print(f"[emolog] Session #{logger.session_id} saved "
+                  f"({logger.count} measurements).")
+        cap.release()
+        cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()

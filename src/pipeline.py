@@ -66,4 +66,14 @@ class EmotionPipeline:
         preds = self.detector.detect(img_bgr)
         au_vec = self.au_extractor.extract(preds)
         if au_vec is None:
-        
+            return {"error": "no_face_detected"}
+        va = self.emotion.predict(au_vec)
+        return {
+            "valence": va["valence"],
+            "arousal": va["arousal"],
+            "va_trained": self.va_trained,
+            # Real probabilities from py-feat's trained emotion classifier —
+            # already computed during detection, previously discarded.
+            "emotions": self.au_extractor.extract_emotions(preds),
+            "raw_aus": au_vec.tolist(),
+        }
