@@ -2,6 +2,12 @@
 
 Znane problemy środowiskowe przy uruchamianiu EmoFACS i sposoby ich obejścia.
 
+**Konwencja:** bloki `powershell` wykonuje się na **Windows**, bloki
+`bash` — w **WSL**. Na Windows interpreter zawsze pełną ścieżką
+(`.\.venv-win\Scripts\python.exe`) — nigdy gołe `python` ani `pip`;
+powód w [sekcji 9](#9-zepsute-launchery-po-przemianowaniu-katalogu-projektu).
+W WSL aktywowany venv działa normalnie, więc `python` wystarczy.
+
 ---
 
 ## Zalecana konfiguracja (skrót)
@@ -9,14 +15,14 @@ Znane problemy środowiskowe przy uruchamianiu EmoFACS i sposoby ich obejścia.
 Jeśli pracujesz w WSL i chcesz tylko, żeby zadziałało:
 
 ```powershell
-# Windows, z katalogu repo
-.\.venv\Scripts\python.exe scripts\serve_camera_windows.py
+# Windows, z katalogu repo — zostaw uruchomione
+.\.venv-win\Scripts\python.exe scripts\serve_camera_windows.py
 ```
 
 ```bash
 # WSL
 ip route show default | awk '{print $3}'       # adres hosta Windows
-python scripts/run_on_webcam.py --cam http://<IP_HOSTA>:8080/video
+python scripts/run_on_webcam.py --cam http://<IP_HOSTA>:8080/video --every 10
 ```
 
 Kamerę obsługuje Windows, cały pipeline ML zostaje w WSL. Szczegóły i
@@ -112,11 +118,14 @@ Patrz [sekcja 3](#3-select-timeout--kamera-podłączona-ale-bez-klatek).
 ### Rozwiązanie C — uruchomienie całości natywnie na Windows
 
 ```powershell
-py scripts/run_on_webcam.py
+.\.venv-win\Scripts\python.exe scripts\run_on_webcam.py --every 10
 ```
 
-Omija cały problem przekazywania USB. Wymaga jednak działającego
-środowiska po stronie Windows — patrz [sekcja 4](#4-za-nowe-zależności-dla-py-feat-062).
+Omija cały problem przekazywania USB. Wymaga środowiska `.venv-win`
+z przypiętymi wersjami zależności — patrz
+[sekcja 4](#4-za-nowe-zależności-dla-py-feat-062). Nie używaj tu
+systemowego `py` ani starego `.venv` — pierwszy nie ma zainstalowanych
+pakietów, drugi ma zepsute launchery ([sekcja 9](#9-zepsute-launchery-po-przemianowaniu-katalogu-projektu)).
 
 ---
 
@@ -258,8 +267,12 @@ przestaje mieć znaczenie.
 **Krok 1 — serwer na Windows** (PowerShell, z katalogu repo):
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\serve_camera_windows.py
+.\.venv-win\Scripts\python.exe scripts\serve_camera_windows.py
 ```
+
+Serwer potrzebuje wyłącznie `cv2`, więc uruchomi go każde środowisko,
+w którym `import cv2` przechodzi — ale trzymaj się `.venv-win`, żeby nie
+wpaść na zepsute launchery starego `.venv` ([sekcja 9](#9-zepsute-launchery-po-przemianowaniu-katalogu-projektu)).
 
 Oczekiwany output:
 
@@ -284,10 +297,10 @@ trzyma stub USB/IP — patrz [sekcja 2](#powrót-kamery-do-windows).
 ip route show default | awk '{print $3}'
 ```
 
-**Krok 3 — uruchomienie pipeline'u w WSL:**
+**Krok 3 — uruchomienie pipeline'u w WSL** (w aktywowanym venv):
 
 ```bash
-python scripts/run_on_webcam.py --cam http://<IP_HOSTA>:8080/video
+python scripts/run_on_webcam.py --cam http://<IP_HOSTA>:8080/video --every 10
 ```
 
 **Krok 4 — reguła zapory** (tylko jeśli krok 3 nie łączy).
@@ -556,12 +569,13 @@ przez co układ jest mylący przy przeglądaniu.
 Wybór interpretera:
 
 ```powershell
-# Windows
-.\.venv\Scripts\python.exe scripts/run_on_webcam.py
+# Windows — NIE używaj strony windowsowej starego .venv (zepsute
+# launchery, sekcja 9). Środowiskiem Windows jest .venv-win:
+.\.venv-win\Scripts\python.exe scripts\run_on_webcam.py
 ```
 
 ```bash
-# WSL
+# WSL — strona linuksowa starego .venv nadal działa:
 ./.venv/bin/python scripts/run_on_webcam.py
 ```
 
@@ -584,8 +598,11 @@ Stary `.venv/` nadal zawiera działające środowisko Linux/WSL
 (`./.venv/bin/python`). Jego część windowsowa jest zepsuta — patrz
 sekcja 9.
 
-**Zalecenie:** przenieść też stronę linuksową do `.venv-wsl/`
-i dodać wszystkie trzy katalogi do `.gitignore`.
+`.gitignore` obejmuje już oba wzorce (`.venv/` i `.venv-*/`).
+
+**Zalecenie:** przy okazji następnej pracy w WSL przenieść też stronę
+linuksową do `.venv-wsl/` — wtedy stary `.venv/` można będzie w całości
+usunąć.
 
 ---
 

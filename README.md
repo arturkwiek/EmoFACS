@@ -68,7 +68,29 @@ reintroduces two separate `ImportError`s — section 4 has the details.
 
 ## Usage
 
+**Command convention used below.** Blocks are labelled by shell:
+
+| Block label | Runs on | Interpreter |
+| --- | --- | --- |
+| `powershell` | **Windows** | always the full path: `.\.venv-win\Scripts\python.exe` |
+| `bash` | **WSL / Linux** | `python` — assumes the venv is active (`source .venv-wsl/bin/activate`) |
+
+On Windows never use a bare `python` or `pip` for this project — the
+reason is a subtle venv trap described in
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) section 9. On WSL/Linux the
+activated venv works normally, so plain `python` is fine there.
+
 ### Static image
+
+Windows:
+
+```powershell
+.\.venv-win\Scripts\python.exe scripts\run_on_image.py path\to\photo.jpg
+# with trained weights:
+.\.venv-win\Scripts\python.exe scripts\run_on_image.py photo.jpg --weights models\emotion_regressor.pth
+```
+
+WSL / Linux:
 
 ```bash
 python scripts/run_on_image.py path/to/photo.jpg
@@ -110,21 +132,51 @@ This is a verified working configuration: torch 2.6.0+cpu, torchvision
 0.21.0+cpu, scipy 1.13.1, py-feat 0.6.2. Detection runs at ~2 s per frame
 on CPU, which `--every 10` keeps comfortable.
 
-#### On WSL
+#### On WSL — two terminals, two processes
 
-`--cam` is **required** and must point at a stream URL — a local device
-index cannot work here. See [Running under WSL](#running-under-wsl) below
-for the two-process setup and the reason behind it.
+WSL cannot read the camera itself. WSL2 does not expose USB webcams, and
+attaching one with `usbipd` still fails: UVC streaming needs isochronous
+USB transfers, which USB/IP does not carry, so the device opens but no
+frame ever arrives. The script knows this and **refuses to start with a
+local device index under WSL** — `--cam` with a stream URL is required.
 
-```bash
-python scripts/run_on_webcam.py --cam http://<HOST_IP>:8080/video
+The working setup: Windows reads the camera and streams it to WSL over
+HTTP. The whole ML pipeline stays in WSL; the Windows side only needs
+`cv2` — no `torch`, no `py-feat`. Both processes must run at the same
+time, each in its own terminal.
+
+**Step 1 — on Windows** (PowerShell, repo root). Start the camera server
+and leave it running:
+
+```powershell
+.\.venv-win\Scripts\python.exe scripts\serve_camera_windows.py
 ```
 
-> **Known issue:** capture and analysis work under WSL, but the preview
-> window does not render the video. See
-> [TROUBLESHOOTING.md](TROUBLESHOOTING.md) sections 5 and 7.
+Wait for `Serving MJPEG on http://0.0.0.0:8080/video` — the server also
+prints the exact URLs it is reachable at.
 
-Options:
+**Step 2 — in WSL.** Find the Windows host address (typically
+`172.x.x.1`):
+
+```bash
+ip route show default | awk '{print $3}'
+```
+
+**Step 3 — in WSL.** Run the pipeline against the stream:
+
+```bash
+python scripts/run_on_webcam.py --cam http://<HOST_IP>:8080/video --every 10
+```
+
+If step 3 cannot connect, the Windows firewall is the usual cause —
+see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) section 3 for the firewall
+rule and a `curl` check that isolates the stream from the pipeline.
+
+> **Known issue:** capture and analysis work under WSL, but the preview
+> window opens without rendering the video. Measurements still reach the
+> database. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) sections 5 and 7.
+
+#### Options (both platforms)
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -138,37 +190,6 @@ Detection costs roughly **2–5 s per frame on CPU**, so `--every` trades
 analysis rate for a fluid preview. The default of `3` is far too low for
 CPU-only machines — `--every 10` or higher is a more realistic starting
 point. Use `--every 1` to analyse every frame.
-
-#### Running under WSL
-
-**Why a plain `python scripts/run_on_webcam.py` cannot work here.** WSL2
-does not expose USB cameras, and attaching one with `usbipd` is not
-sufficient: webcam streaming needs isochronous USB transfers, which
-USB/IP does not carry. The device opens, `/dev/video0` appears, and then
-no frame ever arrives — the symptom is a repeating `select() timeout`.
-
-The fix is to let Windows read the camera and stream it to WSL over HTTP.
-The whole ML pipeline stays in WSL; Windows only needs `cv2` — no `torch`,
-no `py-feat`.
-
-This needs **two processes running at once, one per system.**
-
-```powershell
-# 1. Windows (PowerShell, from the repo root) — leave this running
-.\.venv\Scripts\python.exe scripts\serve_camera_windows.py
-```
-
-```bash
-# 2. WSL — find the Windows host address
-ip route show default | awk '{print $3}'
-
-# 3. WSL — run the pipeline against the stream
-python scripts/run_on_webcam.py --cam http://<HOST_IP>:8080/video
-```
-
-If step 3 cannot connect, the Windows firewall is the usual cause —
-see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) section 3 for the firewall
-rule and a `curl` check that isolates the stream from the pipeline.
 
 Per-frame overlay (top-left of the video window):
 
