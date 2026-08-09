@@ -547,6 +547,12 @@ USB/IP w ogóle nie występują.
 
 ## 8. Współdzielony katalog `.venv` (Windows + Linux)
 
+> **Nieaktualne od 2026-08-08 — katalog `.venv` został skasowany.** Została
+> wyłącznie strona windowsowa jako osobne `.venv-win`. Sekcja zostaje, bo
+> opisuje pułapkę, w którą łatwo wpaść ponownie: **nie twórz jednego `.venv`
+> dla obu systemów.** Odtworzenie środowiska WSL — patrz README, sekcja Setup
+> (`requirements-freeze-venv.txt`).
+
 ### Kontekst
 
 Katalog `.venv/` zawiera **dwa nakładające się środowiska wirtualne**:

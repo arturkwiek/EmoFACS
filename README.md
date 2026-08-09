@@ -55,6 +55,22 @@ python -m venv .venv-wsl
 ./.venv-wsl/bin/python -m pip install -r requirements.txt
 ```
 
+> **The WSL environment no longer exists.** It was deleted on 2026-08-08
+> during a disk cleanup; only `.venv-win` was kept. Its exact package list
+> was captured first and is in `requirements-freeze-venv.txt` (91 packages) —
+> use that instead of `requirements.txt` to reproduce the environment the
+> July results were produced with:
+>
+> ```bash
+> python3.10 -m venv .venv-wsl
+> ./.venv-wsl/bin/python -m pip install -r requirements-freeze-venv.txt
+> ```
+>
+> The shared environment in `~/venvs/common` will **not** work here: it ships
+> numpy 2.x and no torch, while py-feat 0.6.2 needs `numpy<1.24` and
+> `scipy<1.14`. This project needs its own environment — that is a deliberate
+> exception, not an oversight.
+
 Give each platform its own environment directory. A single `.venv` shared
 by Windows and WSL half-works and is confusing to debug — see
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) section 8.
@@ -251,6 +267,40 @@ You can fine-tune it on labelled datasets such as **AffectNet** or **RAF-DB**:
 Without a trained weights file the pipeline still runs — it just uses randomly initialised weights.
 
 ---
+
+## Raspberry Pi as a target platform — assessed, not attempted
+
+Nothing in this repository has ever run on a Raspberry Pi. This section
+records what was established on 2026-08-09 so the question does not have to
+be re-opened from scratch.
+
+**The hardware is not the obstacle.** Two Pi 5 boards on the LAN, read from
+their `node_exporter` metrics:
+
+| | |
+|---|---|
+| CPU / RAM | 4 cores aarch64, **16 GB RAM** |
+| OS | Ubuntu 26.04 LTS, kernel `7.0.0-1016-raspi` |
+| Storage | 62 GB SD card, ~51 GB free |
+
+That is more memory than this pipeline needs, and torch publishes CPU wheels
+for `linux_aarch64`. One of the boards has a camera attached, which would
+remove both the MJPEG streaming hop and the blank-preview problem in
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) section 7 — under a native X server
+neither issue exists.
+
+**The dependency pins are the obstacle**, and it is the same wall as on
+Windows. py-feat 0.6.2 requires `numpy<1.24` and `scipy<1.14`; numpy 1.23.x
+publishes no wheels for Python versions newer than 3.11, and building it from
+source on a Pi is not a fight worth picking. Ubuntu 26.04 ships a much newer
+interpreter, so a working install would need a **separate Python 3.10** on the
+Pi (uv, pyenv or miniforge), after which the aarch64 wheels for
+numpy / scipy / torch should resolve normally.
+
+**Not yet verified:** the interpreter version actually shipped on those
+boards, the camera model, and per-frame timing on ARM. Detection costs 2–5 s
+per frame on a desktop CPU, so measure before assuming the Pi is usable for
+anything close to real time — `--every` may need to go much higher.
 
 ## Swapping the face detector
 
